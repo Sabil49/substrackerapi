@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BillingCycle {
+  WEEKLY
+  MONTHLY
+  YEARLY
+  CUSTOM
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String?  @unique
+  firebaseUid   String?  @unique
+  isPro         Boolean  @default(false)
+  proExpiresAt  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  subscriptions Subscription[]
+  devices       Device[]
+}
+
+model Device {
+  id                String   @id @default(cuid())
+  userId            String
+  deviceToken       String   @unique
+  platform          String
+  isActive          Boolean  @default(true)
+  lastActiveAt      DateTime @default(now())
+  createdAt         DateTime @default(now())
+  
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([deviceToken])
+}
+
+model Subscription {
+  id                String        @id @default(cuid())
+  userId            String
+  name              String
+  amount            Decimal       @db.Decimal(10, 2)
+  currency          String        @default("USD")
+  billingCycle      BillingCycle
+  customCycleDays   Int?
+  startDate         DateTime
+  nextBillingDate   DateTime
+  category          String?
+  notes             String?
+  isActive          Boolean       @default(true)
+  iconUrl           String?
+  color             String?
+  
+  // Free trial tracking
+  isTrial           Boolean       @default(false)
+  trialEndDate      DateTime?
+  
+  // Notification preferences - store as JSON array of integers
+  notifyDaysBefore  Json          @default("[7,3,1,0]")
+  
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reminders         Reminder[]
+  
+  @@index([userId])
+  @@index([nextBillingDate])
+  @@index([isActive])
+}
+
+model Reminder {
+  id              String   @id @default(cuid())
+  subscriptionId  String
+  scheduledFor    DateTime
+  notificationSent Boolean  @default(false)
+  sentAt          DateTime?
+  daysBefore      Int
+  createdAt       DateTime @default(now())
+  
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  @@index([subscriptionId])
+  @@index([scheduledFor])
+  @@index([notificationSent])
+}
+
+model Template {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String
+  iconUrl     String?
+  color       String?
+  avgPrice    Float?
+  createdAt   DateTime @default(now())
+  
+  @@index([category])
+}
