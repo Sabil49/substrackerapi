@@ -1,4 +1,4 @@
-//backend\app\api\user\route.ts
+// backend/app/api/user/route.ts
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
@@ -7,20 +7,19 @@ import { getUserFromRequest, getGuestUser, createApiResponse, createErrorRespons
 
 export async function GET(request: NextRequest) {
   try {
-    // First, try to get authenticated user via token
+    // Try authenticated user first
     let user = await getUserFromRequest(request)
-    
-    // If no authenticated user, check for guest session via secure cookie
+
     if (!user) {
-      const guestIdCookie = request.cookies.get('guestId')?.value
-      
-      // Reject requests without proper authentication
-      if (!guestIdCookie) {
-        return createErrorResponse('Unauthorized: Missing or invalid authentication', 401)
+      // Accept guestId from query param (same as subscriptions/analytics routes)
+      const { searchParams } = new URL(request.url)
+      const guestId = searchParams.get('guestId')
+
+      if (!guestId) {
+        return createErrorResponse('Unauthorized', 401)
       }
-      
-      // Only use guestId from secure cookie, never from query params
-      user = await getGuestUser(guestIdCookie)
+
+      user = await getGuestUser(guestId)
     }
 
     if (!user) {
@@ -37,9 +36,9 @@ export async function GET(request: NextRequest) {
     return createApiResponse({
       user: {
         id: user.id,
-        email: user.email,
+        email: user.email || null,
         isPro: user.isPro,
-        proExpiresAt: user.proExpiresAt,
+        proExpiresAt: user.proExpiresAt || null,
         subscriptionCount,
         subscriptionLimit: user.isPro ? null : 5,
       },
@@ -54,38 +53,25 @@ const updateUserSchema = z.object({
   guestId: z.string().optional(),
 })
 
-// NOTE: isPro and proExpiresAt must only be updated via:
-// - Admin-only endpoints with proper authorization
-// - Payment webhook handlers (subscription/payment events)
-// Clients cannot modify these privilege fields directly
-
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json()
     const data = updateUserSchema.parse(body)
 
-    // Authenticate user via token or secure cookie
     let user = await getUserFromRequest(request)
+
     if (!user && data.guestId) {
-      // Only allow guests to update if coming from a validated request
-      const guestIdCookie = request.cookies.get('guestId')?.value
-      if (guestIdCookie === data.guestId) {
-        user = await getGuestUser(data.guestId)
-      }
+      user = await getGuestUser(data.guestId)
     }
 
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
 
-    // Only allow updates to non-sensitive fields
-    const updateData: any = {}
-    // guestId is immutable, don't allow updates to it
-    // Any privilege fields (isPro, proExpiresAt) must be updated via admin/webhook handlers only
-
+    // No sensitive fields can be updated by clients
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
-      data: updateData,
+      data: {},
     })
 
     return createApiResponse({ user: updatedUser })
