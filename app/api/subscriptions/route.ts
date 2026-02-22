@@ -1,3 +1,4 @@
+//backend\app\api\subscriptions\route.ts
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { z } from 'zod'

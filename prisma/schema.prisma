@@ -1,3 +1,4 @@
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
@@ -20,10 +21,11 @@ model User {
   email         String?  @unique
   firebaseUid   String?  @unique
   isPro         Boolean  @default(false)
+  isGuest       Boolean  @default(false)
   proExpiresAt  DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  
+
   subscriptions Subscription[]
   devices       Device[]
 }
@@ -36,9 +38,9 @@ model Device {
   isActive          Boolean  @default(true)
   lastActiveAt      DateTime @default(now())
   createdAt         DateTime @default(now())
-  
+
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   @@index([userId])
   @@index([deviceToken])
 }
@@ -58,20 +60,29 @@ model Subscription {
   isActive          Boolean       @default(true)
   iconUrl           String?
   color             String?
-  
+
   // Free trial tracking
   isTrial           Boolean       @default(false)
   trialEndDate      DateTime?
-  
+
+  // Cancellation tracking
+  isCanceled        Boolean       @default(false)
+  cancelReason      String?
+
+  // Usage & review tracking
+  usageCount        Int?          @default(0)
+  lastReviewedAt    DateTime?
+  valueScore        String?
+
   // Notification preferences - store as JSON array of integers
   notifyDaysBefore  Json          @default("[7,3,1,0]")
-  
+
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
-  
+
   user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   reminders         Reminder[]
-  
+
   @@index([userId])
   @@index([nextBillingDate])
   @@index([isActive])
@@ -85,9 +96,9 @@ model Reminder {
   sentAt          DateTime?
   daysBefore      Int
   createdAt       DateTime @default(now())
-  
+
   subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  
+
   @@index([subscriptionId])
   @@index([scheduledFor])
   @@index([notificationSent])
@@ -101,6 +112,6 @@ model Template {
   color       String?
   avgPrice    Float?
   createdAt   DateTime @default(now())
-  
+
   @@index([category])
 }

@@ -1,3 +1,4 @@
+// backend/app/api/subscriptions/[id]/route.ts
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
@@ -21,6 +22,10 @@ const updateSubscriptionSchema = z.object({
   trialEndDate: z.string().datetime().optional().nullable(),
   notifyDaysBefore: z.array(z.number()).optional(),
   isActive: z.boolean().optional(),
+  isCanceled: z.boolean().optional(),
+  cancelReason: z.string().optional(),
+  lastReviewedAt: z.string().datetime().optional(),
+  usageCount: z.union([z.number(), z.literal('increment')]).optional(),
   guestId: z.string().optional(),
 }).refine(
   (data) => data.billingCycle !== 'CUSTOM' || data.customCycleDays !== undefined,
@@ -34,7 +39,7 @@ export async function GET(
   try {
     const { searchParams } = new URL(request.url)
     const guestId = searchParams.get('guestId')
-    
+
     let user
     if (guestId) {
       user = await getGuestUser(guestId)
@@ -115,9 +120,21 @@ export async function PATCH(
     if (data.color !== undefined) updateData.color = data.color
     if (data.isTrial !== undefined) updateData.isTrial = data.isTrial
     if (data.isActive !== undefined) updateData.isActive = data.isActive
+    if (data.isCanceled !== undefined) updateData.isCanceled = data.isCanceled
+    if (data.cancelReason !== undefined) updateData.cancelReason = data.cancelReason
+    if (data.lastReviewedAt !== undefined) updateData.lastReviewedAt = new Date(data.lastReviewedAt)
 
     if (data.trialEndDate !== undefined) {
       updateData.trialEndDate = data.trialEndDate ? new Date(data.trialEndDate) : null
+    }
+
+    // Handle usageCount increment or direct set
+    if (data.usageCount !== undefined) {
+      if (data.usageCount === 'increment') {
+        updateData.usageCount = { increment: 1 }
+      } else {
+        updateData.usageCount = data.usageCount
+      }
     }
 
     if (data.billingCycle !== undefined) {
@@ -125,11 +142,11 @@ export async function PATCH(
       if (data.billingCycle === 'CUSTOM') {
         updateData.customCycleDays = data.customCycleDays
       } else {
-        updateData.customCycleDays = null // Clear for non-custom cycles
+        updateData.customCycleDays = null
       }
 
-      const startDate = data.startDate 
-        ? new Date(data.startDate) 
+      const startDate = data.startDate
+        ? new Date(data.startDate)
         : existingSubscription.startDate
 
       updateData.startDate = startDate
@@ -177,7 +194,7 @@ export async function DELETE(
   try {
     const { searchParams } = new URL(request.url)
     const guestId = searchParams.get('guestId')
-    
+
     let user
     if (guestId) {
       user = await getGuestUser(guestId)
