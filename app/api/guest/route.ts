@@ -1,3 +1,4 @@
+// backend/app/api/guest/route.ts
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { createNewGuestUser, createApiResponse, createErrorResponse } from '../../../lib/auth'

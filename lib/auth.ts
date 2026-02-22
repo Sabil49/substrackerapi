@@ -70,19 +70,15 @@ export async function createNewGuestUser() {
 
 export async function getGuestUser(guestId: string) {
   if (!isValidGuestId(guestId)) {
-    throw new Error('Invalid guest ID format')
+    return null
   }
 
   const user = await (prisma.user as any).findUnique({
     where: { id: guestId },
   })
 
-  if (!user) {
+  if (!user || !user.isGuest) {
     return null
-  }
-
-  if (!user.isGuest) {
-    throw new Error('User is not a guest account')
   }
 
   return user
