@@ -32,22 +32,32 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 ## Auth API
 
 The backend exposes a simple authentication API under `/api/auth`.  It
-relies on Firebase email/password accounts so you must set `FIREBASE_API_KEY`
-in your environment (the server already needs the usual admin credentials
-via `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`,
-etc.).
+uses a local PostgreSQL database managed by Prisma and issues JWT tokens.
+Make sure the following environment variables are set:
 
-- `POST /api/auth/signup` – create a new Firebase account and return an
-  ID token plus the fresh user object
-- `POST /api/auth/login` – sign in with email/password, return ID token and
-  user
-- `POST /api/auth/logout` – no server state; included for symmetry with
-  the frontend helpers
+- `DATABASE_URL` – your Postgres connection string (already required by
+  Prisma).  
+- `JWT_SECRET` – a strong secret used to sign tokens (defaults to
+  `'change_me'` in development).
+
+After editing the Prisma schema (auth now stores `passwordHash` and no
+longer uses `firebaseUid`), run a migration before starting the server:
+
+```bash
+npx prisma migrate dev --name add_password_hash --preview-feature
+```
+No Firebase configuration or API key is required.
+
+- `POST /api/auth/signup` – register a user in the Postgres database and
+  return a JWT plus the user object
+- `POST /api/auth/login` – verify credentials, issue JWT and return user
+- `POST /api/auth/logout` – stateless endpoint; clients simply discard token
 
 These endpoints are used by the frontend when a user wants to buy a
 subscription.  If the caller is unauthenticated they can still operate
 as a guest by creating a guest session through `/api/guest` and including
 `guestId` as a query parameter on the normal APIs.
+
 
 ## Deploy on Vercel
 

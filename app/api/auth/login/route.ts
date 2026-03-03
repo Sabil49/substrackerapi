@@ -4,11 +4,10 @@ export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import {
-  verifyFirebaseToken,
   createApiResponse,
   createErrorResponse,
-  signInWithEmailAndPassword,
-  getOrCreateUserFromDecodedToken,
+  authenticateUser,
+  generateToken,
   buildUserResponse,
 } from '../../../../lib/auth'
 
@@ -22,13 +21,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { email, password } = loginSchema.parse(body)
 
-    const { idToken } = await signInWithEmailAndPassword(email, password)
+    const user = await authenticateUser(email, password)
+    if (!user) {
+      return createErrorResponse('Invalid credentials', 401)
+    }
 
-    const decoded = await verifyFirebaseToken(idToken)
-    const user = await getOrCreateUserFromDecodedToken(decoded)
+    const token = await generateToken(user)
     const responseUser = await buildUserResponse(user)
 
-    return createApiResponse({ token: idToken, user: responseUser })
+    return createApiResponse({ token, user: responseUser })
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return createErrorResponse(err.errors[0].message, 400)

@@ -1,95 +1,63 @@
 // backend/lib/auth.ts
 import { randomBytes } from 'crypto'
 import { NextRequest } from 'next/server'
-import type * as admin from 'firebase-admin'
-import { auth } from './firebase'
+import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
 import { prisma } from './db'
 
-// When we need to exchange credentials for an ID token we call the
-// Identity Toolkit REST endpoints. The API key is stored in an env var.
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY
-if (!FIREBASE_API_KEY) {
-  // We don't throw at import time so that other operations (guest, etc.)
-  // still work in environments that don't have an API key (e.g. tests).
+// JWT configuration
+const JWT_SECRET = process.env.JWT_SECRET || 'change_me'
+const JWT_EXPIRY = '7d'
+
+
+// password and token helpers
+function hashPassword(password: string) {
+  return bcrypt.hash(password, 10)
 }
 
-// generic helper for signing in via the REST API (used by login and
-// signup to obtain an ID token that clients can use in Authorization
-// headers).
-export async function signInWithEmailAndPassword(
-  email: string,
-  password: string,
-): Promise<{ idToken: string; localId: string }> {
-  if (!FIREBASE_API_KEY) {
-    throw new Error('FIREBASE_API_KEY is not defined')
-  }
-
-  const url =
-    'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' +
-    FIREBASE_API_KEY
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  })
-  const data = await res.json()
-
-  if (!res.ok) {
-    const msg = data.error?.message || 'Failed to sign in'
-    throw new Error(msg)
-  }
-
-  return { idToken: data.idToken, localId: data.localId }
+function comparePassword(password: string, hash: string) {
+  return bcrypt.compare(password, hash)
 }
 
-// helper that will create or look up a prisma user based on a decoded
-// firebase token.  the logic used to live inside getUserFromRequest; we
-// factor it out so both the auth routes and the request middleware can
-// reuse it.
-export async function getOrCreateUserFromDecodedToken(
-  decodedToken: admin.auth.DecodedIdToken,
-) {
-  let user = await (prisma.user as any).findUnique({
-    where: { firebaseUid: decodedToken.uid },
-  })
-
-  if (!user) {
-    if (!decodedToken.email) {
-      throw new Error('Email is required for user creation')
-    }
-    user = await prisma.user.create({
-      data: {
-        firebaseUid: decodedToken.uid,
-        email: decodedToken.email,
-      },
-    })
-  }
-
-  return user
+export async function generateToken(user: any) {
+  return jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: JWT_EXPIRY })
 }
 
-export async function verifyFirebaseToken(token: string) {
+export async function verifyToken(token: string) {
   try {
-    const decodedToken = await auth.verifyIdToken(token)
-    return decodedToken
-  } catch (error) {
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string }
+    return payload
+  } catch {
     throw new Error('Invalid token')
   }
 }
 
+export async function createUser(email: string, password: string) {
+  const existing = await (prisma.user as any).findUnique({ where: { email } })
+  if (existing) throw new Error('Email already in use')
+  const passwordHash = await hashPassword(password)
+  const user = await prisma.user.create({ data: { email, passwordHash } })
+  return user
+}
+
+export async function authenticateUser(email: string, password: string) {
+  const user = await (prisma.user as any).findUnique({ where: { email } })
+  if (!user || !user.passwordHash) return null
+  const ok = await comparePassword(password, user.passwordHash)
+  if (!ok) return null
+  return user
+}
+
 export async function getUserFromRequest(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
-
-  if (!authHeader?.startsWith('Bearer ')) {
-    return null
-  }
+  if (!authHeader?.startsWith('Bearer ')) return null
 
   const token = authHeader.substring(7)
-
   try {
-    const decodedToken = await verifyFirebaseToken(token)
-    return await getOrCreateUserFromDecodedToken(decodedToken)
-  } catch (error) {
+    const { userId } = await verifyToken(token)
+    const user = await (prisma.user as any).findUnique({ where: { id: userId } })
+    return user
+  } catch (_err) {
     return null
   }
 }
