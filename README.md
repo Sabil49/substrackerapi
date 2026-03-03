@@ -29,6 +29,26 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Auth API
+
+The backend exposes a simple authentication API under `/api/auth`.  It
+relies on Firebase email/password accounts so you must set `FIREBASE_API_KEY`
+in your environment (the server already needs the usual admin credentials
+via `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`,
+etc.).
+
+- `POST /api/auth/signup` – create a new Firebase account and return an
+  ID token plus the fresh user object
+- `POST /api/auth/login` – sign in with email/password, return ID token and
+  user
+- `POST /api/auth/logout` – no server state; included for symmetry with
+  the frontend helpers
+
+These endpoints are used by the frontend when a user wants to buy a
+subscription.  If the caller is unauthenticated they can still operate
+as a guest by creating a guest session through `/api/guest` and including
+`guestId` as a query parameter on the normal APIs.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
