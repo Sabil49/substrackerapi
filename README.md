@@ -58,6 +58,69 @@ subscription.  If the caller is unauthenticated they can still operate
 as a guest by creating a guest session through `/api/guest` and including
 `guestId` as a query parameter on the normal APIs.
 
+## In-App Purchase (IAP) Verification
+
+The backend provides an endpoint to verify in-app purchases from React Native
+apps (iOS and Android) and update the user's premium status.
+
+### Endpoint
+
+`POST /api/user/verify-premium-purchase`
+
+**Headers:**
+- `Authorization: Bearer {jwtToken}` – user's JWT token
+- `Content-Type: application/json`
+
+**Request Body:**
+```json
+{
+  "planId": "monthly" | "yearly",
+  "transactionId": "string (purchase token or transaction ID)",
+  "receipt": "string (receipt data from IAP SDK)",
+  "platform": "android" | "ios" (defaults to "android")
+}
+```
+
+**Response (Success - 200):**
+```json
+{
+  "isPro": true,
+  "planId": "yearly",
+  "expiresAt": "2027-03-04T00:00:00Z"
+}
+```
+
+**Response (Failure - 400/500):**
+```json
+{
+  "message": "Payment verification failed. Please contact support."
+}
+```
+
+### Environment Variables (Google Play)
+
+To validate Android purchases, set these environment variables:
+
+- `GOOGLE_PLAY_PACKAGE_NAME` – Your app's package name (e.g., `com.example.app`)
+- `GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL` – Service account email from Google Cloud
+- `GOOGLE_PLAY_PRIVATE_KEY` – Private key from Google Cloud service account (with `\n` for newlines)
+
+### Environment Variables (App Store)
+
+To validate iOS purchases, set these (optional for now, requires full implementation):
+
+- `APP_STORE_BUNDLE_ID` – Your app's bundle ID
+- `APP_STORE_KEY_ID` – Key ID from App Store Connect
+- `APP_STORE_ISSUER_ID` – Issuer ID from App Store Connect
+- `APP_STORE_PRIVATE_KEY` – Private key from App Store Connect
+
+### How It Works
+
+1. Frontend obtains receipt/transaction token from React Native IAP
+2. Frontend calls `/api/user/verify-premium-purchase` with the receipt
+3. Backend validates receipt with Google Play or App Store
+4. If valid, user's `isPro` status is set to `true` and `proExpiresAt` is updated
+5. Response contains the new premium expiration date
 
 ## Deploy on Vercel
 
