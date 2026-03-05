@@ -75,8 +75,8 @@ apps (iOS and Android) and update the user's premium status.
 ```json
 {
   "planId": "monthly" | "yearly",
-  "transactionId": "string (purchase token or transaction ID)",
-  "receipt": "string (receipt data from IAP SDK)",
+  "transactionId": "string (purchase token from Google Play)",
+  "receipt": "string (product ID or receipt data)",
   "platform": "android" | "ios" (defaults to "android")
 }
 ```
@@ -86,7 +86,7 @@ apps (iOS and Android) and update the user's premium status.
 {
   "isPro": true,
   "planId": "yearly",
-  "expiresAt": "2027-03-04T00:00:00Z"
+  "expiresAt": "2027-03-05T10:30:45.000Z"
 }
 ```
 
@@ -99,28 +99,112 @@ apps (iOS and Android) and update the user's premium status.
 
 ### Environment Variables (Google Play)
 
-To validate Android purchases, set these environment variables:
+To validate Android purchases, set these environment variables in your `.env` file:
 
-- `GOOGLE_PLAY_PACKAGE_NAME` – Your app's package name (e.g., `com.example.app`)
-- `GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL` – Service account email from Google Cloud
-- `GOOGLE_PLAY_PRIVATE_KEY` – Private key from Google Cloud service account (with `\n` for newlines)
+```bash
+# Get these from Google Cloud Console / Firebase Project Service Account
+GOOGLE_CLOUD_PROJECT_ID=substracker-647d9
+GOOGLE_CLOUD_CLIENT_ID=123456789.apps.googleusercontent.com
+GOOGLE_PLAY_PACKAGE_NAME=com.sabil.frontend
+GOOGLE_PLAY_PRIVATE_KEY_ID=key_id_from_json
+GOOGLE_PLAY_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
+GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=firebase-adminsdk-fbsvc@substracker-647d9.iam.gserviceaccount.com
+```
 
-### Environment Variables (App Store)
+### How to Get Google Play Credentials
 
-To validate iOS purchases, set these (optional for now, requires full implementation):
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create or select your project
+3. Enable the `Android Publisher API`
+4. Create a Service Account:
+   - Go to **Service Accounts** → **Create Service Account**
+   - Grant role: **Editor** or **Android Publisher Full Access**
+5. Create a JSON key and copy the values from the provided JSON file
 
-- `APP_STORE_BUNDLE_ID` – Your app's bundle ID
-- `APP_STORE_KEY_ID` – Key ID from App Store Connect
-- `APP_STORE_ISSUER_ID` – Issuer ID from App Store Connect
-- `APP_STORE_PRIVATE_KEY` – Private key from App Store Connect
+### Subscription Product IDs
 
-### How It Works
+The backend maps `planId` to specific product IDs:
+- `planId: "monthly"` → `com.substracker.monthly`
+- `planId: "yearly"` → `com.substracker.yearly`
 
-1. Frontend obtains receipt/transaction token from React Native IAP
-2. Frontend calls `/api/user/verify-premium-purchase` with the receipt
-3. Backend validates receipt with Google Play or App Store
-4. If valid, user's `isPro` status is set to `true` and `proExpiresAt` is updated
-5. Response contains the new premium expiration date
+Make sure these product IDs are created in Google Play Console and match your
+frontend React Native IAP configuration.
+
+### Validation Logic
+
+The backend validates:
+- ✅ Transaction ID is not empty
+- ✅ Subscription exists in Google Play
+- ✅ Not cancelled (`cancelationReason` is null)
+- ✅ Payment is received (`paymentState === 1`)
+- ✅ Not expired (`expiryTimeMillis` is in the future)
+
+If any check fails, the endpoint returns a 400 error with an error message.
+
+### Testing with Postman
+
+1. **Authenticate first** to get a JWT token:
+   ```
+   POST http://localhost:3000/api/auth/login
+   Content-Type: application/json
+   
+   {
+     "email": "test@example.com",
+     "password": "password123"
+   }
+   ```
+   Copy the `token` from the response.
+
+2. **Verify purchase**:
+   ```
+   POST http://localhost:3000/api/user/verify-premium-purchase
+   Authorization: Bearer {your_token}
+   Content-Type: application/json
+   
+   {
+     "planId": "monthly",
+     "transactionId": "gpa.1234567890.abcdefg",
+     "receipt": "com.substracker.monthly",
+     "platform": "android"
+   }
+   ```
+
+### Frontend Integration (React Native)
+
+```typescript
+import { Platform } from 'react-native'
+
+const verifyPurchase = async (purchase: PurchaseResult, jwt: string) => {
+  const response = await fetch('YOUR_API/api/user/verify-premium-purchase', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${jwt}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      planId: purchase.productId === 'com.substracker.monthly' ? 'monthly' : 'yearly',
+      transactionId: purchase.purchaseToken || purchase.transactionId,
+      receipt: purchase.productId,
+      platform: Platform.OS,
+    }),
+  })
+
+  const result = await response.json()
+  if (result.isPro) {
+    console.log('Premium activated until:', result.expiresAt)
+  } else {
+    console.error('Verification failed:', result.message)
+  }
+}
+```
+
+### iOS Support
+
+App Store receipt validation is currently a stub. To implement:
+1. Install app-store-server-api package
+2. Implement full validation in `validateAppStoreReceipt()` using Apple's Server API
+3. Set `APP_STORE_BUNDLE_ID`, `APP_STORE_KEY_ID`, `APP_STORE_ISSUER_ID`, `APP_STORE_PRIVATE_KEY`
+
 
 ## Deploy on Vercel
 

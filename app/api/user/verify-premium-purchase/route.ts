@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
       const result = await validateGooglePlayReceipt(
         transactionId,
         receipt,
+        planId,
       )
       isValid = result.isValid
       purchaseData = result.data
@@ -58,14 +59,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Calculate expiration date based on plan
-    const now = new Date()
-    const expiresAt = new Date(now)
-
-    if (planId === 'monthly') {
-      expiresAt.setMonth(expiresAt.getMonth() + 1)
-    } else if (planId === 'yearly') {
-      expiresAt.setFullYear(expiresAt.getFullYear() + 1)
+    // Calculate expiration date based on Google Play or plan
+    let expiresAt: Date
+    if (purchaseData && purchaseData.expiryTime) {
+      // Use the actual expiry time from Google Play
+      expiresAt = new Date(purchaseData.expiryTime)
+    } else {
+      // Fallback: calculate based on plan
+      const now = new Date()
+      expiresAt = new Date(now)
+      if (planId === 'monthly') {
+        expiresAt.setMonth(expiresAt.getMonth() + 1)
+      } else if (planId === 'yearly') {
+        expiresAt.setFullYear(expiresAt.getFullYear() + 1)
+      }
     }
 
     // Update user's premium status

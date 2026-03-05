@@ -2,110 +2,136 @@
 // In-App Purchase (IAP) receipt validation helpers
 
 import { google } from 'googleapis'
-import { JWT as JWTClient } from 'google-auth-library'
 
-// Google Play validation
-const GOOGLE_PLAY_PACKAGE_NAME = process.env.GOOGLE_PLAY_PACKAGE_NAME
-const GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL =
-  process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL
-const GOOGLE_PLAY_PRIVATE_KEY = process.env.GOOGLE_PLAY_PRIVATE_KEY
+// Initialize Google Play API
+const androidPublisher = google.androidpublisher({
+  version: 'v3',
+  auth: new google.auth.GoogleAuth({
+    credentials: {
+      type: 'service_account',
+      project_id: process.env.GOOGLE_CLOUD_PROJECT_ID,
+      private_key_id: process.env.GOOGLE_PLAY_PRIVATE_KEY_ID,
+      private_key: process.env.GOOGLE_PLAY_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      client_email: process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL,
+      client_id: process.env.GOOGLE_CLOUD_CLIENT_ID,
+      auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+      token_uri: 'https://oauth2.googleapis.com/token',
+      auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+    } as any,
+    scopes: ['https://www.googleapis.com/auth/androidpublisher'],
+  }),
+})
 
-let androidPublisher: any = null
-
-function getAndroidPublisher() {
-  if (!androidPublisher) {
-    if (
-      !GOOGLE_PLAY_PACKAGE_NAME ||
-      !GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL ||
-      !GOOGLE_PLAY_PRIVATE_KEY
-    ) {
-      throw new Error('Google Play credentials not configured')
-    }
-
-    const auth = new JWTClient({
-      email: GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL,
-      key: GOOGLE_PLAY_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      scopes: ['https://www.googleapis.com/auth/androidpublisher'],
-    })
-
-    androidPublisher = google.androidpublisher({
-      version: 'v3',
-      auth: auth as any,
-    })
-  }
-
-  return androidPublisher
-}
-
+/**
+ * Validate Google Play subscription receipt
+ */
 export async function validateGooglePlayReceipt(
-  productId: string,
-  purchaseToken: string,
-): Promise<{ isValid: boolean; data?: any }> {
+  transactionId: string,
+  receipt: string,
+  planId?: string,
+): Promise<{ isValid: boolean; data?: any; error?: string }> {
   try {
-    const androidpub = getAndroidPublisher()
-
-    // For subscription validation
-    const result = await (androidpub.purchases.subscriptions as any).get({
-      packageName: GOOGLE_PLAY_PACKAGE_NAME,
-      subscriptionId: productId,
-      token: purchaseToken,
-    })
-
-    const purchase = result.data
-
-    // Check purchase state (0 = purchased, 1 = canceled)
-    if (purchase.purchaseState !== 0) {
-      return { isValid: false, data: { error: 'Purchase not in purchased state' } }
+    if (!transactionId) {
+      return {
+        isValid: false,
+        error: 'Missing transactionId',
+      }
     }
 
-    // Check if auto renewing (optional check)
-    // const isAutoRenewing = purchase.autoRenewing === true
+    // Determine product ID from planId if provided
+    let productId = receipt // fallback: use receipt as productId
+    if (planId) {
+      productId =
+        planId === 'monthly'
+          ? 'com.substracker.monthly'
+          : 'com.substracker.yearly'
+    }
 
-    return { isValid: true, data: purchase }
+    const packageName = process.env.GOOGLE_PLAY_PACKAGE_NAME
+
+    if (!packageName) {
+      throw new Error('GOOGLE_PLAY_PACKAGE_NAME not configured')
+    }
+
+    // Query Google Play API
+    const response = await (androidPublisher.purchases.subscriptions as any).get({
+      packageName,
+      subscriptionId: productId,
+      token: transactionId,
+    })
+
+    const subscription = response.data
+
+    if (!subscription) {
+      return {
+        isValid: false,
+        error: 'Subscription not found',
+      }
+    }
+
+    // Check if subscription is cancelled
+    if (subscription.cancelationReason) {
+      return {
+        isValid: false,
+        error: 'Subscription was cancelled',
+      }
+    }
+
+    // Check if payment is received (1 = Paid)
+    if (subscription.paymentState !== 1) {
+      return {
+        isValid: false,
+        error: 'Payment not received',
+      }
+    }
+
+    // Check if subscription is still active
+    const expiryTime = parseInt(subscription.expiryTimeMillis || '0')
+    const now = Date.now()
+
+    if (expiryTime < now) {
+      return {
+        isValid: false,
+        error: 'Subscription expired',
+      }
+    }
+
+    return {
+      isValid: true,
+      data: {
+        transactionId,
+        productId,
+        expiryTime,
+        paymentState: subscription.paymentState,
+        autoRenewing: subscription.autoRenewing,
+      },
+    }
   } catch (error: any) {
     console.error('Google Play validation error:', error)
     return {
       isValid: false,
-      data: { error: error.message || 'Google Play validation failed' },
+      error: error.message || 'Validation failed',
     }
   }
 }
 
-// App Store Server API validation
-const APP_STORE_BUNDLE_ID = process.env.APP_STORE_BUNDLE_ID
-const APP_STORE_KEY_ID = process.env.APP_STORE_KEY_ID
-const APP_STORE_ISSUER_ID = process.env.APP_STORE_ISSUER_ID
-const APP_STORE_PRIVATE_KEY = process.env.APP_STORE_PRIVATE_KEY
-
+/**
+ * Validate App Store receipt (iOS) - Stub for future implementation
+ */
 export async function validateAppStoreReceipt(
   receipt: string,
-): Promise<{ isValid: boolean; data?: any }> {
+): Promise<{ isValid: boolean; data?: any; error?: string }> {
   try {
-    // This is a placeholder for App Store validation
-    // In production, you would:
-    // 1. Decode the JWT receipt
-    // 2. Verify with Apple's server
-    // Or use a library like node-appstore-receipt-verification
-
-    if (!receipt || receipt.length === 0) {
-      return {
-        isValid: false,
-        data: { error: 'Invalid receipt format' },
-      }
-    }
-
-    // For now, we'll do basic validation
-    // In production, implement full App Store Server API validation
-    console.warn(
-      'App Store validation is a stub. Implement full validation in production.',
-    )
-
-    return { isValid: true, data: { message: 'Stub validation - implement production logic' } }
-  } catch (error: any) {
-    console.error('App Store validation error:', error)
+    // TODO: Implement App Store Server API validation
+    // For now, return false to require Android-only testing
     return {
       isValid: false,
-      data: { error: error.message || 'App Store validation failed' },
+      error: 'iOS validation not yet implemented',
+    }
+  } catch (error: any) {
+    return {
+      isValid: false,
+      error: error.message || 'Validation failed',
     }
   }
 }
