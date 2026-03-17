@@ -20,11 +20,17 @@ model User {
   id            String   @id @default(cuid())
   email         String?  @unique
   passwordHash  String?  // stored bcrypt hash for email/password accounts
-  isPro         Boolean  @default(false)
-  isGuest       Boolean  @default(false)
-  proExpiresAt  DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  isPro                 Boolean  @default(false)
+  isGuest               Boolean  @default(false)
+  proPlanId             String?  // monthly/yearly
+  proProductId          String?
+  proPurchaseToken      String?
+  proPaymentState       Int?
+  proAutoRenewing       Boolean?
+  proExpiresAt          DateTime?
+  proUpdatedAt          DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   subscriptions Subscription[]
   devices       Device[]

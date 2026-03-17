@@ -13,94 +13,74 @@ import { validateGooglePlayReceipt, validateAppStoreReceipt } from '../../../../
 
 const verifyPremiumSchema = z.object({
   planId: z.enum(['monthly', 'yearly']),
-  transactionId: z.string().min(1),
-  receipt: z.string().min(1),
+  purchaseToken: z.string().min(1),
   platform: z.enum(['android', 'ios']).optional().default('android'),
+  receipt: z.string().optional(),
 })
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify user is authenticated
     const user = await getUserFromRequest(request)
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
 
     const body = await request.json()
-    const { planId, transactionId, receipt, platform } = verifyPremiumSchema.parse(body)
+    const { planId, purchaseToken, platform, receipt } = verifyPremiumSchema.parse(body)
 
-    // Validate receipt based on platform
-    let isValid = false
-    let purchaseData: any = null
-
+    let validateResult
     if (platform === 'android') {
-      const result = await validateGooglePlayReceipt(
-        transactionId,
-        receipt,
-        planId,
-      )
-      isValid = result.isValid
-      purchaseData = result.data
-    } else if (platform === 'ios') {
-      const result = await validateAppStoreReceipt(receipt)
-      isValid = result.isValid
-      purchaseData = result.data
-    }
-
-    if (!isValid) {
-      console.error('Receipt validation failed', {
-        platform,
-        transactionId,
-        error: purchaseData?.error,
-      })
-      return createErrorResponse(
-        'Payment verification failed. Please contact support.',
-        400,
-      )
-    }
-
-    // Calculate expiration date based on Google Play or plan
-    let expiresAt: Date
-    if (purchaseData && purchaseData.expiryTime) {
-      // Use the actual expiry time from Google Play
-      expiresAt = new Date(purchaseData.expiryTime)
+      validateResult = await validateGooglePlayReceipt(purchaseToken, planId)
     } else {
-      // Fallback: calculate based on plan
-      const now = new Date()
-      expiresAt = new Date(now)
-      if (planId === 'monthly') {
-        expiresAt.setMonth(expiresAt.getMonth() + 1)
-      } else if (planId === 'yearly') {
-        expiresAt.setFullYear(expiresAt.getFullYear() + 1)
+      if (!receipt) {
+        return createErrorResponse('Missing iOS receipt', 400)
       }
+      validateResult = await validateAppStoreReceipt(receipt)
     }
 
-    // Update user's premium status
+    if (!validateResult.isValid) {
+      console.error('Verify premium failed', {
+        userId: user.id,
+        platform,
+        planId,
+        error: validateResult.error,
+      })
+      return createApiResponse({
+        isPro: false,
+        error: validateResult.error || 'Receipt validation failed',
+      }, 400)
+    }
+
+    const data = validateResult.data || {}
+    const expiryTime = data.expiryTime ? new Date(data.expiryTime) : null
+
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
       data: {
         isPro: true,
-        proExpiresAt: expiresAt,
+        proPlanId: planId,
+        proProductId: data.productId || (planId === 'monthly' ? 'com.substracker.monthly' : 'com.substracker.yearly'),
+        proPurchaseToken: purchaseToken,
+        proPaymentState: data.paymentState,
+        proAutoRenewing: data.autoRenewing,
+        proExpiresAt: expiryTime,
+        proUpdatedAt: new Date(),
       },
     })
 
-    return createApiResponse(
-      {
-        isPro: updatedUser.isPro,
-        planId,
-        expiresAt: expiresAt.toISOString(),
-      },
-      200,
-    )
+    return createApiResponse({
+      isPro: updatedUser.isPro,
+      proExpiresAt: updatedUser.proExpiresAt,
+      planId,
+      productId: data.productId,
+    })
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return createErrorResponse(`Validation error: ${err.errors[0].message}`, 400)
     }
 
     console.error('Verify premium purchase error:', err)
-    return createErrorResponse(
-      'Payment verification failed. Please contact support.',
-      500,
-    )
+    return createErrorResponse('Payment verification failed. Please contact support.', 500)
   }
 }
+

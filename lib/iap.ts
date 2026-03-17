@@ -26,25 +26,31 @@ const androidPublisher = google.androidpublisher({
  * Validate Google Play subscription receipt
  */
 export async function validateGooglePlayReceipt(
-  transactionId: string,
-  receipt: string,
-  planId?: string,
+  purchaseToken: string,
+  planId?: 'monthly' | 'yearly',
+  subscriptionId?: string,
 ): Promise<{ isValid: boolean; data?: any; error?: string }> {
   try {
-    if (!transactionId) {
+    if (!purchaseToken) {
       return {
         isValid: false,
-        error: 'Missing transactionId',
+        error: 'Missing purchaseToken',
       }
     }
 
-    // Determine product ID from planId if provided
-    let productId = receipt // fallback: use receipt as productId
-    if (planId) {
-      productId =
-        planId === 'monthly'
-          ? 'com.substracker.monthly'
-          : 'com.substracker.yearly'
+    const productId =
+      subscriptionId ||
+      (planId === 'monthly'
+        ? 'com.substracker.monthly'
+        : planId === 'yearly'
+        ? 'com.substracker.yearly'
+        : undefined)
+
+    if (!productId) {
+      return {
+        isValid: false,
+        error: 'Missing planId or subscription product ID',
+      }
     }
 
     const packageName = process.env.GOOGLE_PLAY_PACKAGE_NAME
@@ -53,11 +59,10 @@ export async function validateGooglePlayReceipt(
       throw new Error('GOOGLE_PLAY_PACKAGE_NAME not configured')
     }
 
-    // Query Google Play API
     const response = await (androidPublisher.purchases.subscriptions as any).get({
       packageName,
       subscriptionId: productId,
-      token: transactionId,
+      token: purchaseToken,
     })
 
     const subscription = response.data
@@ -69,7 +74,7 @@ export async function validateGooglePlayReceipt(
       }
     }
 
-    // Check if subscription is cancelled
+    // optional cancellation and hold checks
     if (subscription.cancelationReason) {
       return {
         isValid: false,
@@ -77,7 +82,6 @@ export async function validateGooglePlayReceipt(
       }
     }
 
-    // Check if payment is received (1 = Paid)
     if (subscription.paymentState !== 1) {
       return {
         isValid: false,
@@ -85,32 +89,31 @@ export async function validateGooglePlayReceipt(
       }
     }
 
-    // Check if subscription is still active
-    const expiryTime = parseInt(subscription.expiryTimeMillis || '0')
-    const now = Date.now()
-
-    if (expiryTime < now) {
+    const expiryTime = parseInt(subscription.expiryTimeMillis || '0', 10)
+    if (!expiryTime || expiryTime <= Date.now()) {
       return {
         isValid: false,
-        error: 'Subscription expired',
+        error: 'Subscription has expired',
       }
     }
 
     return {
       isValid: true,
       data: {
-        transactionId,
+        purchaseToken,
         productId,
         expiryTime,
         paymentState: subscription.paymentState,
         autoRenewing: subscription.autoRenewing,
+        cancelationReason: subscription.cancelationReason,
+        userCancellationTimeMillis: subscription.userCancellationTimeMillis,
       },
     }
   } catch (error: any) {
     console.error('Google Play validation error:', error)
     return {
       isValid: false,
-      error: error.message || 'Validation failed',
+      error: error?.message || 'Google Play validation failed',
     }
   }
 }
