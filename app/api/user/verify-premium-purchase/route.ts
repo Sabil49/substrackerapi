@@ -13,10 +13,14 @@ import { validateGooglePlayReceipt, validateAppStoreReceipt } from '../../../../
 
 const verifyPremiumSchema = z.object({
   planId: z.enum(['monthly', 'yearly']),
-  purchaseToken: z.string().min(1),
+  purchaseToken: z.string().min(1).optional(),
+  transactionId: z.string().min(1).optional(),
   platform: z.enum(['android', 'ios']).optional().default('android'),
   receipt: z.string().optional(),
-})
+}).refine(
+  (data) => data.purchaseToken || data.transactionId,
+  { message: 'purchaseToken or transactionId is required', path: ['purchaseToken'] },
+)
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,11 +30,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { planId, purchaseToken, platform, receipt } = verifyPremiumSchema.parse(body)
+    const { planId, purchaseToken, transactionId, platform, receipt } = verifyPremiumSchema.parse(body)
+    const effectivePurchaseToken = purchaseToken || transactionId
 
     let validateResult
     if (platform === 'android') {
-      validateResult = await validateGooglePlayReceipt(purchaseToken, planId)
+      if (!effectivePurchaseToken) {
+        return createErrorResponse('Missing purchase token', 400)
+      }
+      validateResult = await validateGooglePlayReceipt(effectivePurchaseToken, planId)
     } else {
       if (!receipt) {
         return createErrorResponse('Missing iOS receipt', 400)

@@ -125,16 +125,68 @@ export async function validateAppStoreReceipt(
   receipt: string,
 ): Promise<{ isValid: boolean; data?: any; error?: string }> {
   try {
-    // TODO: Implement App Store Server API validation
-    // For now, return false to require Android-only testing
+    if (!receipt) {
+      return { isValid: false, error: 'Missing receipt' }
+    }
+
+    const prodEndpoint = 'https://buy.itunes.apple.com/verifyReceipt'
+    const sandboxEndpoint = 'https://sandbox.itunes.apple.com/verifyReceipt'
+
+    const payload = {
+      'receipt-data': receipt,
+      'exclude-old-transactions': true,
+}
+
+    const callApple = async (url: string) => {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      return res.json()
+    }
+
+    // First try production endpoint
+    let data: any = await callApple(prodEndpoint)
+
+    // If Apple tells us this is a sandbox receipt, retry sandbox
+    if (data && data.status === 21007) {
+      data = await callApple(sandboxEndpoint)
+    }
+
+    if (!data || typeof data.status === 'undefined') {
+      return { isValid: false, error: 'Invalid response from Apple' }
+    }
+
+    if (data.status !== 0) {
+      return { isValid: false, error: `Apple verify status ${data.status}` }
+    }
+
+    // Prefer latest_receipt_info for subscriptions
+    const receipts = data.latest_receipt_info || data.receipt?.in_app || []
+    const latest = Array.isArray(receipts) && receipts.length ? receipts[receipts.length - 1] : receipts
+
+    if (!latest) {
+      return { isValid: false, error: 'No receipt info available' }
+    }
+
+    const expiryMs = parseInt(latest.expires_date_ms || latest.expiration_date_ms || '0', 10)
+    if (!expiryMs || expiryMs <= Date.now()) {
+      return { isValid: false, error: 'Subscription has expired' }
+    }
+
     return {
-      isValid: false,
-      error: 'iOS validation not yet implemented',
+      isValid: true,
+      data: {
+        purchaseToken: latest.original_transaction_id || latest.transaction_id,
+        productId: latest.product_id,
+        expiryTime: expiryMs,
+        isTrial: latest.is_trial_period === 'true' || latest.is_in_intro_offer_period === 'true',
+        raw: data,
+      },
     }
   } catch (error: any) {
-    return {
-      isValid: false,
-      error: error.message || 'Validation failed',
-    }
+    console.error('App Store validation error:', error)
+    return { isValid: false, error: error?.message || 'Validation failed' }
   }
 }
