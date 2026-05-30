@@ -28,17 +28,13 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Check if device token is already registered to a different user
-      const existingDevice = await (prisma.device.findFirst as any)({
-        where: { deviceToken: data.deviceToken },
+      // Allow device token reassignment (guest → auth conversion or device reuse)
+      // Delete any existing device tokens for this user first to avoid conflicts
+      await prisma.device.deleteMany({
+        where: { userId: user.id },
       })
 
-      if (existingDevice && existingDevice.userId !== user.id) {
-        // Device token is already owned by a different user
-        return createErrorResponse('Device token already registered to another user', 403)
-      }
-
-      // Use atomic upsert with global unique deviceToken (ownership verified above)
+      // Reassign device token to current user (upsert handles guest → auth conversion)
       const device = await prisma.device.upsert({
         where: { deviceToken: data.deviceToken },
         create: {
@@ -47,6 +43,7 @@ export async function POST(request: NextRequest) {
           platform: data.platform,
         },
         update: {
+          userId: user.id,
           platform: data.platform,
           isActive: true,
           lastActiveAt: new Date(),
@@ -55,12 +52,7 @@ export async function POST(request: NextRequest) {
 
       return createApiResponse({ device }, 201)
     } catch (error: any) {
-      // Check if error is a unique constraint violation on deviceToken from another user
-      // (in case of race condition between check and upsert)
-      if (error.code === 'P2002' && error.meta?.target?.includes('deviceToken')) {
-        // Device token is already registered to another user
-        return createErrorResponse('Device token already registered to another user', 403)
-      }
+      console.error('Device registration error:', error)
       throw error
     }
   } catch (error) {
