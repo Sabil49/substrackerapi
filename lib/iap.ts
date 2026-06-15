@@ -41,9 +41,9 @@ export async function validateGooglePlayReceipt(
     const productId =
       subscriptionId ||
       (planId === 'monthly'
-        ? 'com.substracker.monthly'
+        ? 'com.substracker.premium.monthly'
         : planId === 'yearly'
-        ? 'com.substracker.yearly'
+        ? 'com.substracker.premium.yearly'
         : undefined)
 
     if (!productId) {

@@ -124,8 +124,8 @@ GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=firebase-adminsdk-fbsvc@substracker-647d9.iam.
 ### Subscription Product IDs
 
 The backend maps `planId` to specific product IDs:
-- `planId: "monthly"` → `com.substracker.monthly`
-- `planId: "yearly"` → `com.substracker.yearly`
+- `planId: "monthly"` → `com.substracker.premium.monthly`
+- `planId: "yearly"` → `com.substracker.premium.yearly`
 
 Make sure these product IDs are created in Google Play Console and match your
 frontend React Native IAP configuration.
@@ -164,7 +164,7 @@ If any check fails, the endpoint returns a 400 error with an error message.
    {
      "planId": "monthly",
      "transactionId": "gpa.1234567890.abcdefg",
-     "receipt": "com.substracker.monthly",
+     "receipt": "com.substracker.premium.monthly",
      "platform": "android"
    }
    ```
@@ -182,7 +182,7 @@ const verifyPurchase = async (purchase: PurchaseResult, jwt: string) => {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      planId: purchase.productId === 'com.substracker.monthly' ? 'monthly' : 'yearly',
+      planId: purchase.productId === 'com.substracker.premium.monthly' ? 'monthly' : 'yearly',
       transactionId: purchase.purchaseToken || purchase.transactionId,
       receipt: purchase.productId,
       platform: Platform.OS,

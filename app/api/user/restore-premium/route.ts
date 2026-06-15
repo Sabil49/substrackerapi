@@ -12,17 +12,25 @@ const restorePremiumSchema = z.object({
   purchaseToken: z.string().optional(),
   planId: z.enum(['monthly', 'yearly']).optional(),
   receipt: z.string().optional(),
+  guestId: z.string().optional(),
 })
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getUserFromRequest(request)
+    const body = await request.json()
+    const { platform, purchaseToken, planId, receipt, guestId } = restorePremiumSchema.parse(body)
+
+    let user = await getUserFromRequest(request)
+    if (!user) {
+      if (!guestId) {
+        return createErrorResponse('Unauthorized', 401)
+      }
+      user = await getGuestUser(guestId)
+    }
+
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
-
-    const body = await request.json()
-    const { platform, purchaseToken, planId, receipt } = restorePremiumSchema.parse(body)
 
     if (platform === 'android') {
       const token = purchaseToken || user.proPurchaseToken

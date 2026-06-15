@@ -17,6 +17,7 @@ const verifyPremiumSchema = z.object({
   transactionId: z.string().min(1).optional(),
   platform: z.enum(['android', 'ios']).optional().default('android'),
   receipt: z.string().optional(),
+  guestId: z.string().optional(),
 }).refine(
   (data) => data.purchaseToken || data.transactionId,
   { message: 'purchaseToken or transactionId is required', path: ['purchaseToken'] },
@@ -24,14 +25,21 @@ const verifyPremiumSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getUserFromRequest(request)
+    const body = await request.json()
+    const { planId, purchaseToken, transactionId, platform, receipt, guestId } = verifyPremiumSchema.parse(body)
+    const effectivePurchaseToken = purchaseToken || transactionId
+
+    let user = await getUserFromRequest(request)
+    if (!user) {
+      if (!guestId) {
+        return createErrorResponse('Unauthorized', 401)
+      }
+      user = await getGuestUser(guestId)
+    }
+
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
-
-    const body = await request.json()
-    const { planId, purchaseToken, transactionId, platform, receipt } = verifyPremiumSchema.parse(body)
-    const effectivePurchaseToken = purchaseToken || transactionId
 
     let validateResult
     if (platform === 'android') {
@@ -67,7 +75,7 @@ export async function POST(request: NextRequest) {
       data: {
         isPro: true,
         proPlanId: planId,
-        proProductId: data.productId || (planId === 'monthly' ? 'com.substracker.monthly' : 'com.substracker.yearly'),
+        proProductId: data.productId || (planId === 'monthly' ? 'com.substracker.premium.monthly' : 'com.substracker.premium.yearly'),
         proPurchaseToken: purchaseToken,
         proPaymentState: data.paymentState,
         proAutoRenewing: data.autoRenewing,
