@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { Decimal } from '@prisma/client/runtime/library'
 import { prisma } from '../../../lib/db'
 import { getUserFromRequest, getGuestUser, createApiResponse, createErrorResponse } from '../../../lib/auth'
+import { syncPremiumStatus } from '../../../lib/premium'
 
 interface Subscription {
   id: string;
@@ -30,6 +31,11 @@ export async function GET(request: NextRequest) {
 
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
+    }
+    user = await syncPremiumStatus(user)
+
+    if (!user.isPro) {
+      return createErrorResponse('Advanced analytics is a Premium feature.', 403)
     }
 
     const subscriptions = await (prisma.subscription as any).findMany({

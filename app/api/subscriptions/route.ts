@@ -6,6 +6,7 @@ import { Decimal } from '@prisma/client/runtime/library'
 import { prisma } from '../../../lib/db'
 import { getUserFromRequest, getGuestUser, createApiResponse, createErrorResponse } from '../../../lib/auth'
 import { calculateNextBillingDate, scheduleReminders } from '../../../lib/notifications'
+import { syncPremiumStatus } from '../../../lib/premium'
 
 const createSubscriptionSchema = z.object({
   name: z.string().min(1),
@@ -41,6 +42,7 @@ export async function GET(request: NextRequest) {
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
+    user = await syncPremiumStatus(user)
 
     const subscriptions = await (prisma.subscription as any).findMany({
       where: {
@@ -76,6 +78,7 @@ export async function POST(request: NextRequest) {
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
+    user = await syncPremiumStatus(user)
 
     if (!user.isPro) {
       const subscriptionCount = await (prisma.subscription as any).count({
@@ -86,7 +89,10 @@ export async function POST(request: NextRequest) {
       })
 
       if (subscriptionCount >= 5) {
-        return createErrorResponse('Free tier limited to 5 subscriptions', 403)
+        return createErrorResponse(
+          'The free plan supports up to 5 active subscriptions. Upgrade to Premium to add more.',
+          403,
+        )
       }
     }
 

@@ -4,10 +4,17 @@ import { NextRequest } from 'next/server'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from './db'
+import { syncPremiumStatus } from './premium'
 
 // JWT configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'change_me'
 const JWT_EXPIRY = '7d'
+
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET
+  if (secret) return secret
+  if (process.env.NODE_ENV !== 'production') return 'substracker-local-development-only'
+  throw new Error('JWT_SECRET is not configured')
+}
 
 
 // password and token helpers
@@ -20,24 +27,24 @@ function comparePassword(password: string, hash: string) {
 }
 
 export async function generateToken(user: any) {
-  return jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: JWT_EXPIRY })
+  return jwt.sign({ userId: user.id }, getJwtSecret(), { expiresIn: JWT_EXPIRY })
 }
 
 export async function verifyToken(token: string) {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string }
+    const payload = jwt.verify(token, getJwtSecret()) as { userId: string }
     return payload
   } catch {
     throw new Error('Invalid token')
   }
 }
 
-export async function createUser(email: string, password: string) {
+export async function createUser(email: string, password: string, guestId?: string) {
   const existing = await (prisma.user as any).findUnique({ where: { email } })
   if (existing) throw new Error('Email already in use')
   const passwordHash = await hashPassword(password)
   const user = await prisma.user.create({ data: { email, passwordHash } })
-  return user
+  return mergeGuestIntoUser(user, guestId)
 }
 
 export async function authenticateUser(email: string, password: string) {
@@ -48,6 +55,47 @@ export async function authenticateUser(email: string, password: string) {
   return user
 }
 
+export async function mergeGuestIntoUser(user: any, guestId?: string) {
+  if (!guestId || guestId === user.id) return syncPremiumStatus(user)
+
+  const guest = await getGuestUser(guestId)
+  if (!guest) return syncPremiumStatus(user)
+
+  const guestIsPro = guest.isPro &&
+    (!guest.proExpiresAt || new Date(guest.proExpiresAt).getTime() > Date.now())
+  const userIsPro = user.isPro &&
+    (!user.proExpiresAt || new Date(user.proExpiresAt).getTime() > Date.now())
+  const guestExpiry = guest.proExpiresAt ? new Date(guest.proExpiresAt).getTime() : 0
+  const userExpiry = user.proExpiresAt ? new Date(user.proExpiresAt).getTime() : 0
+  const useGuestPremium = guestIsPro && (!userIsPro || guestExpiry > userExpiry)
+
+  const results = await (prisma as any).$transaction([
+    prisma.subscription.updateMany({
+      where: { userId: guest.id },
+      data: { userId: user.id },
+    }),
+    prisma.device.updateMany({
+      where: { userId: guest.id },
+      data: { userId: user.id },
+    }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: useGuestPremium ? {
+        isPro: true,
+        proPlanId: guest.proPlanId,
+        proProductId: guest.proProductId,
+        proPurchaseToken: guest.proPurchaseToken,
+        proPaymentState: guest.proPaymentState,
+        proAutoRenewing: guest.proAutoRenewing,
+        proExpiresAt: guest.proExpiresAt,
+        proUpdatedAt: new Date(),
+      } : {},
+    }),
+    prisma.user.delete({ where: { id: guest.id } }),
+  ])
+  return results[2]
+}
+
 export async function getUserFromRequest(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (!authHeader?.startsWith('Bearer ')) return null
@@ -56,7 +104,7 @@ export async function getUserFromRequest(request: NextRequest) {
   try {
     const { userId } = await verifyToken(token)
     const user = await (prisma.user as any).findUnique({ where: { id: userId } })
-    return user
+    return user ? syncPremiumStatus(user) : null
   } catch (_err) {
     return null
   }
@@ -66,6 +114,7 @@ const GUEST_ID_PREFIX = 'guest_'
 
 // helper to build the user object we send back to the client
 export async function buildUserResponse(user: any) {
+  user = await syncPremiumStatus(user)
   const subscriptionCount = await (prisma.subscription as any).count({
     where: {
       userId: user.id,

@@ -135,6 +135,9 @@ export async function validateAppStoreReceipt(
     const payload = {
       'receipt-data': receipt,
       'exclude-old-transactions': true,
+      ...(process.env.APPLE_SHARED_SECRET
+        ? { password: process.env.APPLE_SHARED_SECRET }
+        : {}),
 }
 
     const callApple = async (url: string) => {
@@ -164,10 +167,24 @@ export async function validateAppStoreReceipt(
 
     // Prefer latest_receipt_info for subscriptions
     const receipts = data.latest_receipt_info || data.receipt?.in_app || []
-    const latest = Array.isArray(receipts) && receipts.length ? receipts[receipts.length - 1] : receipts
+    const latest = Array.isArray(receipts) && receipts.length
+      ? [...receipts].sort(
+          (a, b) =>
+            Number(b.expires_date_ms || b.expiration_date_ms || 0) -
+            Number(a.expires_date_ms || a.expiration_date_ms || 0),
+        )[0]
+      : receipts
 
     if (!latest) {
       return { isValid: false, error: 'No receipt info available' }
+    }
+
+    if (!['com.substracker.premium.monthly', 'com.substracker.premium.yearly'].includes(latest.product_id)) {
+      return { isValid: false, error: 'Receipt is not for a SubTracker Premium product' }
+    }
+
+    if (latest.cancellation_date_ms) {
+      return { isValid: false, error: 'Subscription was refunded or revoked' }
     }
 
     const expiryMs = parseInt(latest.expires_date_ms || latest.expiration_date_ms || '0', 10)

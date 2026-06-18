@@ -7,24 +7,27 @@ import {
   createApiResponse,
   createErrorResponse,
   authenticateUser,
+  mergeGuestIntoUser,
   generateToken,
   buildUserResponse,
 } from '../../../../lib/auth'
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
+  email: z.string().trim().toLowerCase().email('Please enter a valid email address.'),
+  password: z.string().min(1, 'Please enter your password.'),
+  guestId: z.string().optional(),
 })
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { email, password } = loginSchema.parse(body)
+    const { email, password, guestId } = loginSchema.parse(body)
 
-    const user = await authenticateUser(email, password)
+    let user = await authenticateUser(email, password)
     if (!user) {
-      return createErrorResponse('Invalid credentials', 401)
+      return createErrorResponse('The email or password is incorrect.', 401)
     }
+    user = await mergeGuestIntoUser(user, guestId)
 
     const token = await generateToken(user)
     const responseUser = await buildUserResponse(user)
@@ -35,6 +38,6 @@ export async function POST(request: NextRequest) {
       return createErrorResponse(err.errors[0].message, 400)
     }
     console.error('Login error:', err)
-    return createErrorResponse(err.message || 'Failed to log in', 500)
+    return createErrorResponse('We could not sign you in right now. Please try again.', 500)
   }
 }

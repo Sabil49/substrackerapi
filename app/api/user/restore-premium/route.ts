@@ -97,16 +97,25 @@ export async function POST(request: NextRequest) {
         }, 400)
       }
 
+      const data = validateResult.data || {}
+      const restoredPlan =
+        data.productId === 'com.substracker.premium.monthly' ? 'monthly' : 'yearly'
       const updatedUser = await prisma.user.update({
         where: { id: user.id },
         data: {
           isPro: true,
+          proPlanId: restoredPlan,
+          proProductId: data.productId,
+          proPurchaseToken: data.purchaseToken,
+          proExpiresAt: data.expiryTime ? new Date(data.expiryTime) : null,
           proUpdatedAt: new Date(),
         },
       })
 
       return createApiResponse({
         isPro: updatedUser.isPro,
+        proExpiresAt: updatedUser.proExpiresAt,
+        planId: restoredPlan,
       })
     }
 

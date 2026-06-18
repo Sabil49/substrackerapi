@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '../../../lib/db'
 import { getUserFromRequest, getGuestUser, createApiResponse, createErrorResponse } from '../../../lib/auth'
+import { syncPremiumStatus } from '../../../lib/premium'
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,6 +26,7 @@ export async function GET(request: NextRequest) {
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
+    user = await syncPremiumStatus(user)
 
     const subscriptionCount = await (prisma.subscription as any).count({
       where: {
@@ -91,7 +93,6 @@ export async function DELETE(request: NextRequest) {
     if (!user) {
       return createErrorResponse('Unauthorized', 401)
     }
-
     // Related subscriptions, reminders, and devices are removed by
     // the cascading relations defined in the Prisma schema.
     await prisma.user.delete({

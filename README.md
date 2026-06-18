@@ -105,10 +105,11 @@ To validate Android purchases, set these environment variables in your `.env` fi
 # Get these from Google Cloud Console / Firebase Project Service Account
 GOOGLE_CLOUD_PROJECT_ID=substracker-647d9
 GOOGLE_CLOUD_CLIENT_ID=123456789.apps.googleusercontent.com
-GOOGLE_PLAY_PACKAGE_NAME=com.sabil.frontend
+GOOGLE_PLAY_PACKAGE_NAME=com.sabil.subscriptiontracker
 GOOGLE_PLAY_PRIVATE_KEY_ID=key_id_from_json
 GOOGLE_PLAY_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
 GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=firebase-adminsdk-fbsvc@substracker-647d9.iam.gserviceaccount.com
+APPLE_SHARED_SECRET=your_app_specific_shared_secret
 ```
 
 ### How to Get Google Play Credentials
