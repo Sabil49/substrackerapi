@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { prisma } from '../../../../lib/db'
 import {
   getUserFromRequest,
+  getGuestUser,
   createApiResponse,
   createErrorResponse,
 } from '../../../../lib/auth'

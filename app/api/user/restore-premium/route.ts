@@ -4,7 +4,12 @@ export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '../../../../lib/db'
-import { getUserFromRequest, createApiResponse, createErrorResponse } from '../../../../lib/auth'
+import {
+  getUserFromRequest,
+  getGuestUser,
+  createApiResponse,
+  createErrorResponse,
+} from '../../../../lib/auth'
 import { validateGooglePlayReceipt, validateAppStoreReceipt } from '../../../../lib/iap'
 
 const restorePremiumSchema = z.object({
