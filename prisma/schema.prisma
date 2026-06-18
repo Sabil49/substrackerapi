@@ -34,6 +34,31 @@ model User {
 
   subscriptions Subscription[]
   devices       Device[]
+  premiumPurchases PremiumPurchase[]
+}
+
+model PremiumPurchase {
+  id             String   @id @default(cuid())
+  userId         String
+  store          String
+  environment    String
+  externalId     String
+  transactionId  String
+  productId      String
+  planId         String
+  purchaseToken  String
+  expiresAt      DateTime
+  autoRenewing   Boolean?
+  paymentState   Int?
+  lastVerifiedAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([store, externalId])
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Device {

@@ -109,8 +109,27 @@ GOOGLE_PLAY_PACKAGE_NAME=com.sabil.subscriptiontracker
 GOOGLE_PLAY_PRIVATE_KEY_ID=key_id_from_json
 GOOGLE_PLAY_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
 GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=firebase-adminsdk-fbsvc@substracker-647d9.iam.gserviceaccount.com
-APPLE_SHARED_SECRET=your_app_specific_shared_secret
+APPLE_BUNDLE_ID=com.sabil.subscriptiontracker
+# Numeric Apple ID from App Store Connect > App Information.
+# Required for production purchases; TestFlight uses the Sandbox verifier.
+APPLE_APP_ID=1234567890
 ```
+
+Apple StoreKit 2 purchases are verified as signed JWS transactions with
+Apple's official `@apple/app-store-server-library`. The Apple G2/G3 root
+certificates are stored under `backend/certs`. On environments where bundled
+certificate files are unavailable, set `APPLE_ROOT_CA_G2_BASE64` and
+`APPLE_ROOT_CA_G3_BASE64` to the base64-encoded DER certificate contents.
+
+After deploying this version, apply the purchase-ledger migration:
+
+```bash
+npx prisma migrate deploy
+```
+
+Both the backend and mobile app must be deployed together. Older mobile builds
+send a legacy `receipt` value and will receive Apple status `21002`; current
+builds send the StoreKit 2 `signedTransaction`.
 
 ### How to Get Google Play Credentials
 
@@ -201,10 +220,13 @@ const verifyPurchase = async (purchase: PurchaseResult, jwt: string) => {
 
 ### iOS Support
 
-App Store receipt validation is currently a stub. To implement:
-1. Install app-store-server-api package
-2. Implement full validation in `validateAppStoreReceipt()` using Apple's Server API
-3. Set `APP_STORE_BUNDLE_ID`, `APP_STORE_KEY_ID`, `APP_STORE_ISSUER_ID`, `APP_STORE_PRIVATE_KEY`
+iOS purchase and restore flows use StoreKit 2 signed transactions. The backend:
+
+1. Verifies the JWS certificate chain and signature.
+2. Verifies bundle ID, environment, product ID, expiry, and revocation state.
+3. Stores the Apple original transaction ID in `PremiumPurchase`.
+4. Prevents the same store subscription from being linked to multiple
+   non-guest SubTracker accounts.
 
 
 ## Deploy on Vercel

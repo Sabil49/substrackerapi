@@ -1,109 +1,82 @@
-// backend/app/api/user/verify-premium-purchase/route.ts
 export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { prisma } from '../../../../lib/db'
 import {
-  getUserFromRequest,
-  getGuestUser,
   createApiResponse,
   createErrorResponse,
+  getGuestUser,
+  getUserFromRequest,
 } from '../../../../lib/auth'
-import { validateGooglePlayReceipt, validateAppStoreReceipt } from '../../../../lib/iap'
+import {
+  validateAppStoreTransaction,
+  validateGooglePlayReceipt,
+} from '../../../../lib/iap'
+import {
+  grantPremiumEntitlement,
+  PurchaseOwnershipError,
+} from '../../../../lib/premium-entitlements'
 
-const verifyPremiumSchema = z.object({
-  planId: z.enum(['monthly', 'yearly']),
-  purchaseToken: z.string().min(1).optional(),
-  transactionId: z.string().min(1).optional(),
-  platform: z.enum(['android', 'ios']).optional().default('android'),
-  receipt: z.string().optional(),
-  guestId: z.string().optional(),
-}).refine(
-  (data) => data.purchaseToken || data.transactionId,
-  { message: 'purchaseToken or transactionId is required', path: ['purchaseToken'] },
-)
+const verifyPremiumSchema = z
+  .object({
+    platform: z.enum(['android', 'ios']),
+    planId: z.enum(['monthly', 'yearly']).optional(),
+    purchaseToken: z.string().min(1).optional(),
+    signedTransaction: z.string().min(1).optional(),
+    guestId: z.string().optional(),
+  })
+  .superRefine((data, context) => {
+    if (data.platform === 'android' && !data.purchaseToken) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Google Play purchase token is required',
+        path: ['purchaseToken'],
+      })
+    }
+    if (data.platform === 'ios' && !data.signedTransaction) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'App Store signed transaction is required',
+        path: ['signedTransaction'],
+      })
+    }
+  })
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { planId, purchaseToken, transactionId, platform, receipt, guestId } = verifyPremiumSchema.parse(body)
-    const effectivePurchaseToken = purchaseToken || transactionId
-
+    const data = verifyPremiumSchema.parse(await request.json())
     let user = await getUserFromRequest(request)
-    if (!user) {
-      if (!guestId) {
-        return createErrorResponse('Unauthorized', 401)
-      }
-      user = await getGuestUser(guestId)
+    if (!user && data.guestId) user = await getGuestUser(data.guestId)
+    if (!user) return createErrorResponse('Unauthorized', 401)
+
+    const validation =
+      data.platform === 'android'
+        ? await validateGooglePlayReceipt(data.purchaseToken!)
+        : await validateAppStoreTransaction(data.signedTransaction!)
+
+    if (!validation.isValid) {
+      return createErrorResponse(validation.error, 400)
     }
 
-    if (!user) {
-      return createErrorResponse('Unauthorized', 401)
-    }
-
-    let validateResult
-    if (platform === 'android') {
-      if (!effectivePurchaseToken) {
-        return createErrorResponse('Missing purchase token', 400)
-      }
-      validateResult = await validateGooglePlayReceipt(effectivePurchaseToken, planId)
-    } else {
-      if (!receipt) {
-        return createErrorResponse('Missing iOS receipt', 400)
-      }
-      validateResult = await validateAppStoreReceipt(receipt)
-    }
-
-    if (!validateResult.isValid) {
-      console.error('Verify premium failed', {
-        userId: user.id,
-        platform,
-        planId,
-        error: validateResult.error,
-      })
-      return createApiResponse({
-        isPro: false,
-        error: validateResult.error || 'Receipt validation failed',
-      }, 400)
-    }
-
-    const data = validateResult.data || {}
-    const expiryTime = data.expiryTime ? new Date(data.expiryTime) : null
-    const verifiedPlanId =
-      data.productId === 'com.substracker.premium.monthly'
-        ? 'monthly'
-        : data.productId === 'com.substracker.premium.yearly'
-        ? 'yearly'
-        : planId
-
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        isPro: true,
-        proPlanId: verifiedPlanId,
-        proProductId: data.productId || (verifiedPlanId === 'monthly' ? 'com.substracker.premium.monthly' : 'com.substracker.premium.yearly'),
-        proPurchaseToken: data.purchaseToken || effectivePurchaseToken,
-        proPaymentState: data.paymentState,
-        proAutoRenewing: data.autoRenewing,
-        proExpiresAt: expiryTime,
-        proUpdatedAt: new Date(),
-      },
-    })
-
+    const updatedUser = await grantPremiumEntitlement(user, validation.data)
     return createApiResponse({
-      isPro: updatedUser.isPro,
+      isPro: true,
       proExpiresAt: updatedUser.proExpiresAt,
-      planId: verifiedPlanId,
-      productId: data.productId,
+      planId: validation.data.planId,
+      productId: validation.data.productId,
+      environment: validation.data.environment,
     })
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return createErrorResponse(`Validation error: ${err.errors[0].message}`, 400)
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return createErrorResponse(error.errors[0].message, 400)
     }
-
-    console.error('Verify premium purchase error:', err)
-    return createErrorResponse('Payment verification failed. Please contact support.', 500)
+    if (error instanceof PurchaseOwnershipError) {
+      return createErrorResponse(error.message, 409)
+    }
+    console.error('Verify premium purchase error:', error)
+    return createErrorResponse(
+      'Payment verification is temporarily unavailable. Please try again.',
+      500,
+    )
   }
 }
-

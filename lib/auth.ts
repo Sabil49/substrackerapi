@@ -78,6 +78,10 @@ export async function mergeGuestIntoUser(user: any, guestId?: string) {
       where: { userId: guest.id },
       data: { userId: user.id },
     }),
+    (prisma.premiumPurchase as any).updateMany({
+      where: { userId: guest.id },
+      data: { userId: user.id },
+    }),
     prisma.user.update({
       where: { id: user.id },
       data: useGuestPremium ? {
@@ -93,7 +97,7 @@ export async function mergeGuestIntoUser(user: any, guestId?: string) {
     }),
     prisma.user.delete({ where: { id: guest.id } }),
   ])
-  return results[2]
+  return results[3]
 }
 
 export async function getUserFromRequest(request: NextRequest) {

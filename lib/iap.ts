@@ -1,9 +1,42 @@
-// backend/lib/iap.ts
-// In-App Purchase (IAP) receipt validation helpers
-
+import { readFileSync } from 'fs'
+import path from 'path'
+import {
+  Environment,
+  SignedDataVerifier,
+} from '@apple/app-store-server-library'
 import { google } from 'googleapis'
 
-// Initialize Google Play API
+export const PREMIUM_PRODUCTS = [
+  'com.substracker.premium.monthly',
+  'com.substracker.premium.yearly',
+] as const
+
+export type PremiumPlanId = 'monthly' | 'yearly'
+export type StorePlatform = 'android' | 'ios'
+
+export interface VerifiedPremiumPurchase {
+  store: StorePlatform
+  environment: string
+  productId: string
+  planId: PremiumPlanId
+  externalId: string
+  transactionId: string
+  purchaseToken: string
+  expiryTime: number
+  autoRenewing?: boolean
+  paymentState?: number
+}
+
+export type PurchaseValidationResult =
+  | { isValid: true; data: VerifiedPremiumPurchase }
+  | { isValid: false; error: string }
+
+function planForProduct(productId: string): PremiumPlanId | null {
+  if (productId === PREMIUM_PRODUCTS[0]) return 'monthly'
+  if (productId === PREMIUM_PRODUCTS[1]) return 'yearly'
+  return null
+}
+
 const androidPublisher = google.androidpublisher({
   version: 'v3',
   auth: new google.auth.GoogleAuth({
@@ -22,188 +55,211 @@ const androidPublisher = google.androidpublisher({
   }),
 })
 
-/**
- * Validate Google Play subscription receipt
- */
 export async function validateGooglePlayReceipt(
   purchaseToken: string,
-  planId?: 'monthly' | 'yearly',
-  subscriptionId?: string,
-): Promise<{ isValid: boolean; data?: any; error?: string }> {
+): Promise<PurchaseValidationResult> {
   try {
-    if (!purchaseToken) {
-      return {
-        isValid: false,
-        error: 'Missing purchaseToken',
-      }
-    }
-
-    const productId =
-      subscriptionId ||
-      (planId === 'monthly'
-        ? 'com.substracker.premium.monthly'
-        : planId === 'yearly'
-        ? 'com.substracker.premium.yearly'
-        : undefined)
-
-    if (!productId) {
-      return {
-        isValid: false,
-        error: 'Missing planId or subscription product ID',
-      }
-    }
-
     const packageName = process.env.GOOGLE_PLAY_PACKAGE_NAME
-
     if (!packageName) {
-      throw new Error('GOOGLE_PLAY_PACKAGE_NAME not configured')
+      throw new Error('GOOGLE_PLAY_PACKAGE_NAME is not configured')
+    }
+    if (!purchaseToken) {
+      return { isValid: false, error: 'Missing Google Play purchase token' }
     }
 
-    const response = await (androidPublisher.purchases.subscriptions as any).get({
+    const response = await (androidPublisher.purchases.subscriptionsv2 as any).get({
       packageName,
-      subscriptionId: productId,
       token: purchaseToken,
     })
-
     const subscription = response.data
+    const allowedStates = new Set([
+      'SUBSCRIPTION_STATE_ACTIVE',
+      'SUBSCRIPTION_STATE_IN_GRACE_PERIOD',
+      // Cancellation stops renewal but entitlement remains until expiry.
+      'SUBSCRIPTION_STATE_CANCELED',
+    ])
 
-    if (!subscription) {
+    if (!subscription || !allowedStates.has(subscription.subscriptionState)) {
       return {
         isValid: false,
-        error: 'Subscription not found',
+        error:
+          subscription?.subscriptionState === 'SUBSCRIPTION_STATE_ON_HOLD'
+            ? 'Subscription payment is on hold'
+            : 'No active Google Play subscription was found',
       }
     }
 
-    // optional cancellation and hold checks
-    if (subscription.cancelationReason) {
-      return {
-        isValid: false,
-        error: 'Subscription was cancelled',
-      }
+    const lineItems = Array.isArray(subscription.lineItems)
+      ? subscription.lineItems
+      : []
+    const validLineItems = lineItems
+      .map((item: any) => ({
+        item,
+        expiryTime: Date.parse(item.expiryTime || ''),
+      }))
+      .filter(
+        ({ item, expiryTime }: any) =>
+          planForProduct(item.productId) && Number.isFinite(expiryTime),
+      )
+      .sort((a: any, b: any) => b.expiryTime - a.expiryTime)
+    const latest = validLineItems[0]
+
+    if (!latest || latest.expiryTime <= Date.now()) {
+      return { isValid: false, error: 'Google Play subscription has expired' }
     }
 
-    if (subscription.paymentState !== 1) {
-      return {
-        isValid: false,
-        error: 'Payment not received',
-      }
-    }
-
-    const expiryTime = parseInt(subscription.expiryTimeMillis || '0', 10)
-    if (!expiryTime || expiryTime <= Date.now()) {
-      return {
-        isValid: false,
-        error: 'Subscription has expired',
-      }
+    const productId = latest.item.productId
+    const planId = planForProduct(productId)
+    if (!planId) {
+      return { isValid: false, error: 'Unknown Google Play subscription product' }
     }
 
     return {
       isValid: true,
       data: {
-        purchaseToken,
+        store: 'android',
+        environment: process.env.NODE_ENV === 'production' ? 'Production' : 'Test',
         productId,
-        expiryTime,
-        paymentState: subscription.paymentState,
-        autoRenewing: subscription.autoRenewing,
-        cancelationReason: subscription.cancelationReason,
-        userCancellationTimeMillis: subscription.userCancellationTimeMillis,
+        planId,
+        externalId: purchaseToken,
+        transactionId:
+          subscription.latestOrderId || latest.item.latestSuccessfulOrderId || purchaseToken,
+        purchaseToken,
+        expiryTime: latest.expiryTime,
+        paymentState: 1,
+        autoRenewing: Boolean(latest.item.autoRenewingPlan?.autoRenewEnabled),
       },
     }
   } catch (error: any) {
     console.error('Google Play validation error:', error)
     return {
       isValid: false,
-      error: error?.message || 'Google Play validation failed',
+      error: 'Google Play could not verify this subscription. Please try again.',
     }
   }
 }
 
-/**
- * Validate App Store receipt (iOS) - Stub for future implementation
- */
-export async function validateAppStoreReceipt(
-  receipt: string,
-): Promise<{ isValid: boolean; data?: any; error?: string }> {
-  try {
-    if (!receipt) {
-      return { isValid: false, error: 'Missing receipt' }
-    }
+let appleRootCertificates: Buffer[] | null = null
 
-    const prodEndpoint = 'https://buy.itunes.apple.com/verifyReceipt'
-    const sandboxEndpoint = 'https://sandbox.itunes.apple.com/verifyReceipt'
+function loadAppleRootCertificates() {
+  if (appleRootCertificates) return appleRootCertificates
 
-    const payload = {
-      'receipt-data': receipt,
-      'exclude-old-transactions': true,
-      ...(process.env.APPLE_SHARED_SECRET
-        ? { password: process.env.APPLE_SHARED_SECRET }
-        : {}),
+  const envCertificates = [
+    process.env.APPLE_ROOT_CA_G2_BASE64,
+    process.env.APPLE_ROOT_CA_G3_BASE64,
+  ].filter(Boolean) as string[]
+
+  if (envCertificates.length === 2) {
+    appleRootCertificates = envCertificates.map((certificate) =>
+      Buffer.from(certificate, 'base64'),
+    )
+    return appleRootCertificates
+  }
+
+  appleRootCertificates = [
+    readFileSync(path.join(process.cwd(), 'certs', 'AppleRootCA-G2.cer')),
+    readFileSync(path.join(process.cwd(), 'certs', 'AppleRootCA-G3.cer')),
+  ]
+  return appleRootCertificates
 }
 
-    const callApple = async (url: string) => {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      return res.json()
+async function verifyAppleJwsForEnvironment(
+  signedTransaction: string,
+  environment: Environment,
+) {
+  const bundleId =
+    process.env.APPLE_BUNDLE_ID || 'com.sabil.subscriptiontracker'
+  const appAppleId = process.env.APPLE_APP_ID
+    ? Number(process.env.APPLE_APP_ID)
+    : undefined
+
+  if (environment === Environment.PRODUCTION && !appAppleId) {
+    throw new Error('APPLE_APP_ID is required for production verification')
+  }
+
+  const verifier = new SignedDataVerifier(
+    loadAppleRootCertificates(),
+    true,
+    environment,
+    bundleId,
+    appAppleId,
+  )
+  return verifier.verifyAndDecodeTransaction(signedTransaction)
+}
+
+export async function validateAppStoreTransaction(
+  signedTransaction: string,
+): Promise<PurchaseValidationResult> {
+  try {
+    if (!signedTransaction || signedTransaction.split('.').length !== 3) {
+      return { isValid: false, error: 'Missing or invalid App Store transaction' }
     }
 
-    // First try production endpoint
-    let data: any = await callApple(prodEndpoint)
+    let transaction: Awaited<
+      ReturnType<typeof verifyAppleJwsForEnvironment>
+    > | null = null
+    let productionError: unknown
 
-    // If Apple tells us this is a sandbox receipt, retry sandbox
-    if (data && data.status === 21007) {
-      data = await callApple(sandboxEndpoint)
+    try {
+      transaction = await verifyAppleJwsForEnvironment(
+        signedTransaction,
+        Environment.PRODUCTION,
+      )
+    } catch (error) {
+      productionError = error
     }
 
-    if (!data || typeof data.status === 'undefined') {
-      return { isValid: false, error: 'Invalid response from Apple' }
+    if (!transaction) {
+      try {
+        transaction = await verifyAppleJwsForEnvironment(
+          signedTransaction,
+          Environment.SANDBOX,
+        )
+      } catch (sandboxError) {
+        console.error('Apple transaction verification failed', {
+          productionError,
+          sandboxError,
+        })
+        return {
+          isValid: false,
+          error: 'Apple could not verify this subscription.',
+        }
+      }
     }
 
-    if (data.status !== 0) {
-      return { isValid: false, error: `Apple verify status ${data.status}` }
+    const productId = transaction.productId || ''
+    const planId = planForProduct(productId)
+    if (!planId) {
+      return { isValid: false, error: 'Unknown App Store subscription product' }
     }
-
-    // Prefer latest_receipt_info for subscriptions
-    const receipts = data.latest_receipt_info || data.receipt?.in_app || []
-    const latest = Array.isArray(receipts) && receipts.length
-      ? [...receipts].sort(
-          (a, b) =>
-            Number(b.expires_date_ms || b.expiration_date_ms || 0) -
-            Number(a.expires_date_ms || a.expiration_date_ms || 0),
-        )[0]
-      : receipts
-
-    if (!latest) {
-      return { isValid: false, error: 'No receipt info available' }
+    if (!transaction.originalTransactionId || !transaction.transactionId) {
+      return { isValid: false, error: 'Incomplete App Store transaction' }
     }
-
-    if (!['com.substracker.premium.monthly', 'com.substracker.premium.yearly'].includes(latest.product_id)) {
-      return { isValid: false, error: 'Receipt is not for a SubTracker Premium product' }
+    if (transaction.revocationDate) {
+      return { isValid: false, error: 'App Store subscription was revoked or refunded' }
     }
-
-    if (latest.cancellation_date_ms) {
-      return { isValid: false, error: 'Subscription was refunded or revoked' }
-    }
-
-    const expiryMs = parseInt(latest.expires_date_ms || latest.expiration_date_ms || '0', 10)
-    if (!expiryMs || expiryMs <= Date.now()) {
-      return { isValid: false, error: 'Subscription has expired' }
+    if (!transaction.expiresDate || transaction.expiresDate <= Date.now()) {
+      return { isValid: false, error: 'App Store subscription has expired' }
     }
 
     return {
       isValid: true,
       data: {
-        purchaseToken: latest.original_transaction_id || latest.transaction_id,
-        productId: latest.product_id,
-        expiryTime: expiryMs,
-        isTrial: latest.is_trial_period === 'true' || latest.is_in_intro_offer_period === 'true',
-        raw: data,
+        store: 'ios',
+        environment: String(transaction.environment || 'Unknown'),
+        productId,
+        planId,
+        externalId: transaction.originalTransactionId,
+        transactionId: transaction.transactionId,
+        purchaseToken: signedTransaction,
+        expiryTime: transaction.expiresDate,
       },
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error('App Store validation error:', error)
-    return { isValid: false, error: error?.message || 'Validation failed' }
+    return {
+      isValid: false,
+      error: 'Apple could not verify this subscription. Please try again.',
+    }
   }
 }
