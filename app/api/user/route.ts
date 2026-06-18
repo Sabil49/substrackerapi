@@ -83,3 +83,24 @@ export async function PATCH(request: NextRequest) {
     return createErrorResponse('Failed to update user', 500)
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = await getUserFromRequest(request)
+
+    if (!user) {
+      return createErrorResponse('Unauthorized', 401)
+    }
+
+    // Related subscriptions, reminders, and devices are removed by
+    // the cascading relations defined in the Prisma schema.
+    await prisma.user.delete({
+      where: { id: user.id },
+    })
+
+    return createApiResponse({ message: 'Account deleted successfully' })
+  } catch (error) {
+    console.error('Delete user error:', error)
+    return createErrorResponse('Failed to delete account', 500)
+  }
+}
