@@ -6,13 +6,19 @@ import {
 } from '@apple/app-store-server-library'
 import { google } from 'googleapis'
 
-export const PREMIUM_PRODUCTS = [
-  'com.substracker.premium.monthly',
-  'com.substracker.premium.yearly',
-] as const
-
 export type PremiumPlanId = 'monthly' | 'yearly'
 export type StorePlatform = 'android' | 'ios'
+
+export const PREMIUM_PRODUCTS_BY_STORE = {
+  ios: {
+    monthly: 'com.substracker.premium.monthly',
+    yearly: 'com.substracker.premium.yearly',
+  },
+  android: {
+    monthly: 'com.substracker.monthly',
+    yearly: 'com.substracker.yearly',
+  },
+} as const
 
 export interface VerifiedPremiumPurchase {
   store: StorePlatform
@@ -31,9 +37,13 @@ export type PurchaseValidationResult =
   | { isValid: true; data: VerifiedPremiumPurchase }
   | { isValid: false; error: string }
 
-function planForProduct(productId: string): PremiumPlanId | null {
-  if (productId === PREMIUM_PRODUCTS[0]) return 'monthly'
-  if (productId === PREMIUM_PRODUCTS[1]) return 'yearly'
+function planForProduct(
+  productId: string,
+  store: StorePlatform,
+): PremiumPlanId | null {
+  const products = PREMIUM_PRODUCTS_BY_STORE[store]
+  if (productId === products.monthly) return 'monthly'
+  if (productId === products.yearly) return 'yearly'
   return null
 }
 
@@ -99,7 +109,7 @@ export async function validateGooglePlayReceipt(
       }))
       .filter(
         ({ item, expiryTime }: any) =>
-          planForProduct(item.productId) && Number.isFinite(expiryTime),
+          planForProduct(item.productId, 'android') && Number.isFinite(expiryTime),
       )
       .sort((a: any, b: any) => b.expiryTime - a.expiryTime)
     const latest = validLineItems[0]
@@ -109,7 +119,7 @@ export async function validateGooglePlayReceipt(
     }
 
     const productId = latest.item.productId
-    const planId = planForProduct(productId)
+    const planId = planForProduct(productId, 'android')
     if (!planId) {
       return { isValid: false, error: 'Unknown Google Play subscription product' }
     }
@@ -228,7 +238,7 @@ export async function validateAppStoreTransaction(
     }
 
     const productId = transaction.productId || ''
-    const planId = planForProduct(productId)
+    const planId = planForProduct(productId, 'ios')
     if (!planId) {
       return { isValid: false, error: 'Unknown App Store subscription product' }
     }
